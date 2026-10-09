@@ -77,13 +77,14 @@ Before merging a bump:
 - A point-release tag is immutable: once a GitHub Release for a given
   `image-version` is published, never republish different bits under it.
 - **Three patches live under `patches/freedesktop-sdk/`.** `0001` adds the GNOME
-  CAS servers to `project.conf`; **`0006`
-  carries the Cilium/Kubernetes kernel options** (VXLAN, GENEVE, tc BPF,
-  conntrack/ss diagnostics) and `0007` the hardware watchdog core and drivers,
-  appended below `0006` in the same `fdsdk-config.sh`. A bumper must not drop `0006` or the kubeadm and
-  k0s sysexts lose their datapath. If a release changed a patched file,
-  refresh the patches in place, `0006` before `0007`; never delete `0006` because "it looks small". Why each patch exists and when it can be dropped is in
-  [`patches/README.md`](../../patches/README.md).
+  CAS servers to `project.conf`; `0006` carries the Cilium/Kubernetes kernel
+  options (VXLAN, GENEVE, tc BPF, conntrack/ss diagnostics) and `0007` the
+  hardware watchdog core and drivers, appended below `0006` in the same
+  `fdsdk-config.sh`. If a release changed a patched file, refresh the patches
+  in place, `0006` before `0007`; never delete `0006` because "it looks small"
+  (the kubeadm/k0s sysexts that depended on it are gone, so it is a candidate
+  to drop at the next FSDK refresh). Why each patch exists and when it can be
+  dropped is in [`patches/README.md`](../../patches/README.md).
 - Junction overrides are only meaningful for components your local elements
   reference directly. The 25 GNOME sdk/* overrides (cairo, gtk3, pango, glib,
   gdk-pixbuf…) were dead weight — none of our `base-stack`, `brew-deps` etc. ever

@@ -21,6 +21,10 @@ sources:
     path: files/os/systemd/system/sshd-generated@.service.d
     directory: sshd-generated-dropin-src
 
+# Text-only payload; the base-stack sandbox has no stripper toolchain.
+variables:
+  strip-binaries: ""
+
 config:
   install-commands:
     - |

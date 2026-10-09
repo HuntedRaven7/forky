@@ -130,9 +130,8 @@ waiting for CRDs and rollouts in between, fills `${HOMELAB_*}` placeholders
 from `homelab.conf`, skips files whose inputs are unset, and never deletes.
 A failed run is retried by the unit. It also carries `bluefin-cluster` (a Go
 binary, so the image has `ARCHITECTURE=`) for multi-node homelabs
-(`HOMELAB_ROLE`), which find each other over the base OS's mDNS; see
-[`files/homelab/cluster/README.md`](../../files/homelab/cluster/README.md).
-The applier does nothing on `HOMELAB_ROLE=node`. After the base set it
+(`HOMELAB_ROLE`), which find each other over the base OS's mDNS. The applier
+does nothing on `HOMELAB_ROLE=node`. After the base set it
 applies the homelab add-ons, the manifest-only `argo-workflows`, `mcp` and
 `kubestellar` sysexts, which merge their directories into
 `/usr/share/bluefin/homelab/addons.d/` ([homelab-profile.md](homelab-profile.md),

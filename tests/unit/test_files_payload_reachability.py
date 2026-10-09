@@ -41,9 +41,6 @@ FILES_DIR = ROOT / "files"
 HOST_TOOLING = {
     # Host developer CLI: Justfile `setup-kubestellar` runs it from the checkout.
     "files/bin/bluefin-kubestellar",
-    # Release public key; CI copies it to files/boot-keys/import-pubring.pgp,
-    # from where homelab/os-sysupdate-keys.bst installs it.
-    "files/os/sysupdate-keys/import-pubring.gpg",
     # Release module certificate; CI copies it to
     # files/boot-keys/modules/linux-module-cert.crt for the kernel cache
     # (scripts/kernel-cache.sh), from where the kernel's

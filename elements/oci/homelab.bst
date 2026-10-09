@@ -4,8 +4,8 @@ description: |
   prepare-image.sh (initial scripts, sysusers root entry, systemd presets,
   firstboot locale/timezone), packed as an OCI image labelled
   `containers.bootc: 1` so `bootc install` / `bootc upgrade` / `bootc switch`
-  accept it. The /etc produced here ships in the image; ostree keeps it per
-  deployment.
+  accept it. /etc ships as /usr/share/factory/etc and is materialized by a
+  generated tmpfiles.d snippet on first boot; ostree keeps it per deployment.
 
 (@):
 - include/arch.yml
@@ -19,7 +19,7 @@ build-depends:
 - homelab/os-initial-scripts.bst
 - filename: homelab/os-filesystem.bst
   config:
-    location: /layer
+    location: /sysroot
 
 environment:
   LD_PRELOAD: /usr/libexec/fakecap/fakecap.so
@@ -31,40 +31,71 @@ variables:
 
 config:
   commands:
-  - mkdir /fakecap
+  - mkdir -p /fakecap /tmp /var/tmp
 
   - |
     prepare-image.sh \
-      --sysroot /layer \
+      --sysroot /sysroot \
       --initscripts /initial_scripts \
       --seed "%{sysroot-seed}" \
       --noroot --noboot >/dev/null
 
   - |
-    systemd-sysusers --root /layer
+    systemd-sysusers --root /sysroot
     # root ships locked as "!unprovisioned" -- the value systemd-firstboot
     # treats as "root not configured", so a passwd.hashed-password.root
     # credential can still provision it; never a password or a usable hash.
-    printf 'root:!unprovisioned:0:0:99999:7:::\n' > /layer/etc/shadow
+    printf 'root:!unprovisioned:0:0:99999:7:::\n' > /sysroot/etc/shadow
     # Empty machine-id: every deployment gets a fresh one.
-    : > /layer/etc/machine-id
+    : > /sysroot/etc/machine-id
     # Headless: homed-firstboot would block the console asking for a user.
-    mkdir -p /layer/etc/systemd/system
-    ln -sf /dev/null /layer/etc/systemd/system/systemd-homed-firstboot.service
+    mkdir -p /sysroot/etc/systemd/system
+    ln -sf /dev/null /sysroot/etc/systemd/system/systemd-homed-firstboot.service
+    printf 'LANG=C.UTF-8\n' > /sysroot/etc/locale.conf
+    ln -sf ../usr/share/zoneinfo/UTC /sysroot/etc/localtime
 
   - |
     # bootc images must not ship /usr/etc; ostree generates it client-side
     # from /etc at deploy time. If any element staged /usr/etc, fold it in.
-    if [ -d /layer/usr/etc ]; then
-      mkdir -p /layer/etc
-      cp -a /layer/usr/etc/. /layer/etc/
-      rm -rf /layer/usr/etc
+    if [ -d /sysroot/usr/etc ]; then
+      mkdir -p /sysroot/etc
+      cp -a /sysroot/usr/etc/. /sysroot/etc/
+      rm -rf /sysroot/usr/etc
     fi
+
+  - |
+    set -eu
+    factory=/sysroot/usr/share/factory/etc
+    rm -rf "${factory}"
+    mkdir -p "$(dirname "${factory}")"
+    mv /sysroot/etc "${factory}"
+    mkdir /sysroot/etc
+    conf=/sysroot/usr/lib/tmpfiles.d/00-bluefin-factory-etc.conf
+    # Read-only reference data is linked, not copied. C never overwrites,
+    # and a disk install keeps /etc across updates, so a copy would stay
+    # at the version the node first booted; a link follows /usr. An operator
+    # can still replace the link with a file, which L leaves alone.
+    # protocols, services: IANA registries (homelab/iana-etc.bst).
+    linked='protocols services'
+    for entry in ${linked}; do
+      test -f "${factory}/${entry}"
+    done
+    printf 'd /etc 0755 root root -\n' > "${conf}"
+    for entry in $(ls -A "${factory}"); do
+      if [ -L "${factory}/${entry}" ]; then
+        printf 'L /etc/%s - - - - %s\n' "${entry}" "$(readlink "${factory}/${entry}")" >> "${conf}"
+      elif printf '%s\n' ${linked} | grep -qxF "${entry}"; then
+        printf 'L /etc/%s - - - - ../usr/share/factory/etc/%s\n' "${entry}" "${entry}" >> "${conf}"
+      else
+        printf 'C /etc/%s - - - - %s\n' "${entry}" "/usr/share/factory/etc/${entry}" >> "${conf}"
+      fi
+    done
+    echo "Factory /etc entries: $(wc -l < "${conf}")"
 
   - |
     # Rebuild the shared library linker cache for the sysroot. Without this,
     # any SO version bump leaves /etc/ld.so.cache stale after a `bootc switch`.
-    ldconfig -r /layer -f /layer/etc/ld.so.conf
+    ldconfig -r /sysroot -f /sysroot/etc/ld.so.conf
 
   - |
     cd "%{install-root}"
@@ -74,7 +105,7 @@ config:
     images:
     - os: linux
       architecture: "%{go-arch}"
-      layer: /layer
+      layer: /sysroot
       comment: "Import Homelab layer"
       config:
         Labels:

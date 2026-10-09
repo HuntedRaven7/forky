@@ -22,5 +22,5 @@ def just_installs() -> list[tuple[str, str, str]]:
 
 def test_just_is_pinned_identically_everywhere() -> None:
     installs = just_installs()
-    assert len(installs) >= 6, installs
+    assert len(installs) >= 5, installs
     assert len({(uses, tool) for _, uses, tool in installs}) == 1, installs

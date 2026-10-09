@@ -26,8 +26,6 @@ entry in the USB installer's boot menu ([usb-installer.md](usb-installer.md)).
 - The components and the applier (`bluefin-homelab-apply`): every key and
   default is in `files/homelab/sysext/homelab.conf.example`, the sysext in
   [systemd-sysext-extensions.md](systemd-sysext-extensions.md).
-- Joining and the passphrase protocol:
-  [`files/homelab/cluster/README.md`](../../files/homelab/cluster/README.md).
 - kubeadm itself: [kubeadm-sysext.md](kubeadm-sysext.md); k0s:
   [k0s-sysext.md](k0s-sysext.md).
 

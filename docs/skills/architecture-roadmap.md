@@ -14,7 +14,6 @@ metadata:
 Status: current roadmap.
 
 This file captures planned architecture work and the rationale behind it. Verified implementation rules now live in [systemd-sysupdate-verification.md](systemd-sysupdate-verification.md), [tpm2-credential-sealing.md](tpm2-credential-sealing.md), and [systemd-sysext-extensions.md](systemd-sysext-extensions.md).
-The source-verified gap analysis lives in [gap-analysis-distros.md](gap-analysis-distros.md).
 
 ## Done
 
@@ -34,7 +33,7 @@ For reference, so future planning does not redo them:
 
 ## Planned work
 
-Priorities are derived from [gap-analysis-distros.md](gap-analysis-distros.md).
+Priorities are set in the fork's issue tracker.
 
 | # | Item | Rationale / source gap |
 |---|------|------------------------|
@@ -48,9 +47,7 @@ Priorities are derived from [gap-analysis-distros.md](gap-analysis-distros.md).
 
 - The current tree intentionally favors a small, verifiable core: verity-sealed `/usr`, A/B slots, signed boot chain, opt-in sysexts.
 - Any implementation work should preserve the current systemd-native model and avoid custom daemons.
-- See [gap-analysis-distros.md](gap-analysis-distros.md) for the source-verified comparison that produced this list.
 
 ## See also
 
-- [gap-analysis-distros.md](gap-analysis-distros.md) — source-verified distro comparison.
 - [CONTEXT.md](../../CONTEXT.md) — canonical project domain glossary.

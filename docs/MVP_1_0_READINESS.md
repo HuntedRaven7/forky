@@ -26,7 +26,6 @@ This audit tracks the gap between the current tree and a first public/usable MVP
 | Sysext lock-step updates | ✅ | `zfs` / `kubestellar` sysupdate features download the version-locked sysext with each OS update; rollback keeps the matching sysext (verified in the 6-phase `dogfood-install` run) |
 | First-boot SSH keys | ✅ | Ignition (`ignition.config` / `ignition.config.url` credentials, or `bluefin-node.ign` next to the UKI on UEFI HTTP boot; `tests/fixtures/ignition/var-on-disk.ign`) and `tmpfiles.extra` / sysusers credentials (`elements/bluefin-server/os-creds-prov.bst`) |
 
-Competitor context: [gap-analysis-distros.md](skills/gap-analysis-distros.md)
 
 ## Verdict
 
@@ -72,5 +71,4 @@ Priority order. Each item depends on the ones above it.
 
 - Downstream factory CI repository Argo workflow templates
 - `projectbluefin/server/.github/workflows/build.yml`
-- `docs/skills/gap-analysis-distros.md`
 - `docs/skills/architecture-roadmap.md`

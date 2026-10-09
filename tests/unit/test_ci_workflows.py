@@ -65,21 +65,9 @@ def go_modules() -> list[str]:
     )
 
 
-def test_unit_workflow_tests_every_go_module() -> None:
-    modules = go_modules()
-    assert modules, "no go.mod found; drop the go job or fix the search"
-    job = workflow("unit-tests.yml")["jobs"]["go"]
-    assert sorted(job["strategy"]["matrix"]["module"]) == modules
-    assert job["defaults"]["run"]["working-directory"] == "${{ matrix.module }}"
-
-    setup = [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/setup-go@")]
-    assert len(setup) == 1
-    assert re.fullmatch(r"actions/setup-go@[0-9a-f]{40}", setup[0]["uses"])
-    assert setup[0]["with"]["go-version-file"] == "${{ matrix.module }}/go.mod"
-
-    runs = "\n".join(s.get("run", "") for s in job["steps"])
-    for command in ("gofmt -l", "go vet ./...", "go test -race ./..."):
-        assert command in runs, command
+def test_unit_workflow_builds_no_go_modules() -> None:
+    assert not go_modules(), "no Go code in the fork; the unit job only runs python/bats"
+    assert "go" not in workflow("unit-tests.yml")["jobs"], "drop the go job along with its module"
 
 
 
@@ -196,7 +184,7 @@ NIGHTLY = workflow("build.yml")["jobs"]["nightly-status"]
 def test_nightly_status_runs_only_for_the_schedule_with_issues_write_only() -> None:
     assert NIGHTLY["if"] == "${{ !cancelled() && github.event_name == 'schedule' }}"
     assert NIGHTLY["permissions"] == {"issues": "write"}
-    assert {"build", "boot-test"} <= set(NIGHTLY["needs"])
+    assert {"build", "changes"} <= set(NIGHTLY["needs"])
     for step in NIGHTLY["steps"]:
         assert "uses" not in step, "the job runs no repository code or actions"
         assert "${{" not in step.get("run", ""), "context goes through env:, not inline"
