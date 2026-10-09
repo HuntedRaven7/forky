@@ -1,0 +1,85 @@
+name: Reproducibility
+
+# Builds the image set, deletes the artifacts of the final assembly steps
+# (images, UKIs, initrd, sysexts, signed systemd-boot) from the local
+# BuildStream cache, rebuilds them without pulling from any remote, and
+# compares every output file except the GPG signatures, which embed their
+# signing time. Both builds share one checkout, one set of throwaway keys and
+# one image-version, so any difference comes from the assembly itself.
+#
+# bluefin-server/keys/efi-keys.bst is kept: sbvarsign stamps the current time
+# into each Secure Boot variable update it signs (PK/KEK/db.auth), the same
+# way gpg timestamps SHA256SUMS.gpg, and has no option to fix it.
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reproducibility
+  cancel-in-progress: false
+
+jobs:
+  reproducibility:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 300
+    env:
+      # The bootc image element and the payload it stages at a location;
+      # tests/unit/test_reproducibility_workflow.py derives them from the
+      # build and fails when the workflow env no longer matches.
+      FINAL_ASSEMBLY: >-
+        oci/homelab.bst
+        homelab/os-filesystem.bst
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up just
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2
+        with:
+          tool: just@1.58.0
+
+      - name: Set up runner disk space
+        run: bash scripts/ci-runner-disk.sh
+
+      # Throwaway keys and a 0.* version: nothing from this job is published.
+      - name: Generate keys and set the image version
+        run: |
+          set -euo pipefail
+          just gen-dev-keys
+          just set-version "0.${GITHUB_RUN_NUMBER}"
+
+      - name: First build
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends podman fuse-overlayfs
+          sudo chmod 666 /dev/fuse
+          just build-image
+          just bst artifact checkout oci/homelab.bst --directory /src/dist/first
+          (cd dist/first && find . -type f -exec sha256sum {} + | sort -k2) > first.sha256
+          rm -rf dist/first
+
+      - name: Rebuild the final assembly
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086
+          just bst artifact delete ${FINAL_ASSEMBLY}
+          just bst build --ignore-project-artifact-remotes oci/homelab.bst
+          just bst artifact checkout oci/homelab.bst --directory /src/dist/second
+          (cd dist/second && find . -type f -exec sha256sum {} + | sort -k2) > second.sha256
+
+      - name: Compare
+        run: |
+          set -euo pipefail
+          cat first.sha256
+          if ! diff -u first.sha256 second.sha256; then
+            echo "::error::The rebuilt image set differs from the first build (files listed above)."
+            exit 1
+          fi
+          echo "Both builds produced identical files."

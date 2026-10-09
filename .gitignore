@@ -1,0 +1,17 @@
+**/__pycache__/
+.bst
+.bst2
+.cache/*
+*.img
+*.raw
+*.tar
+*.tar.gz
+*.spdx.json
+dist/
+.build-out
+.worktrees/
+.pytest_cache/
+# Local Secure Boot / module signing keys (just gen-dev-keys)
+files/boot-keys/
+# CAS client credentials, while scripts/kernel-cache.sh seeds the cache
+.casd.*/

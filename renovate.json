@@ -1,0 +1,56 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^elements/.*\\.bst$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)(?:\\s+versioning=(?<versioning>[^\\s]+))?\\n\\s*ref:\\s*['\"]?(?<currentValue>[^'\"\\s]+)['\"]?"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "just, installed with taiki-e/install-action at every call site in the workflows. One PR bumps them all, so CI never runs two versions at once.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "tool:\\s*just@(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "depNameTemplate": "just",
+      "packageNameTemplate": "casey/just",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "The Justfile's bst2 image. Its tags are the freedesktop-sdk-docker-images commit each image was built from, which the docker datasource cannot order, so this follows that repository's default branch with git-refs; every merge there publishes a bst2 tag for its commit. The value stays a tag, not a digest pin.",
+      "managerFilePatterns": [
+        "/^Justfile$/"
+      ],
+      "matchStrings": [
+        "registry\\.gitlab\\.com/freedesktop-sdk/infrastructure/freedesktop-sdk-docker-images/bst2:(?<currentDigest>[0-9a-f]{40})\\b"
+      ],
+      "depNameTemplate": "bst2",
+      "packageNameTemplate": "https://gitlab.com/freedesktop-sdk/infrastructure/freedesktop-sdk-docker-images.git",
+      "datasourceTemplate": "git-refs",
+      "currentValueTemplate": "master"
+    }
+  ],
+  "homebrew": {
+    "description": "Formula/*.rb pin per-arch release binaries (kc-agent_<v>_<os>_<arch>.tar.gz) with one sha256 each. Renovate's homebrew manager only understands source-archive formulae: it rewrites the url to https://github.com/<owner>/<repo>/archive/refs/tags/<tag>.tar.gz and carries over a single checksum, which leaves `bin.install \"kc-agent\"` with no binary to install and the other three architectures unresolvable. It produced exactly that in projectbluefin/server#209. Bumping these formulae means fetching four assets and four checksums, so it stays a manual change until a generator exists.",
+    "enabled": false
+  },
+  "packageRules": [
+    {
+      "matchDatasources": ["git-refs"],
+      "matchPackageNames": ["https://gitlab.com/freedesktop-sdk/freedesktop-sdk.git"],
+      "extractVersion": "^freedesktop-sdk-(?<version>26\\.08\\.[0-9]+)$",
+      "versioning": "semver"
+    }
+  ]
+}

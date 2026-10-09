@@ -1,0 +1,3 @@
+# SSH is present in the image for on-demand diagnostics, but off by default.
+disable sshd.service
+disable sshd.socket

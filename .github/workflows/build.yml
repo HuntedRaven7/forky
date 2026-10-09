@@ -1,0 +1,287 @@
+name: Build image artifacts
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    branches: [main]
+  # Nightly build of main with throwaway keys, to catch rot in the
+  # third-party caches; it never publishes.
+  schedule:
+    - cron: "30 5 * * *"
+  workflow_dispatch:
+
+# Pull requests cancel superseded runs. Pushes to main queue instead: a run
+# on main ends in a publish, and cancelling it would skip that version.
+concurrency:
+  group: build-${{ github.event_name == 'schedule' && 'nightly' || (github.event.action == 'labeled' && github.event.label.name != 'full-build') && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Least privilege by default: this workflow executes PR-controlled build code
+# (the Justfile and build scripts come from the PR head), so the workflow-wide
+# token is read-only. No job that runs on `pull_request` holds a write token;
+# packages: write is granted only to `release`, which is gated to main.
+permissions:
+  contents: read
+
+jobs:
+  # Decides what this run builds:
+  #  - release: a push or dispatch on main. Published to GHCR.
+  #  - image: the full image build. Always for releases, the nightly
+  #    schedule and dispatches; on a pull request only with the full-build
+  #    label or when it changes the FSDK junction or its patches, and never
+  #    when it cannot change the image (docs, unit tests; see
+  #    .github/scripts/image-build-needed.py).
+  #  - validate: the cheap graph + version check, every pull request.
+  # A skipped job reports as passing, so `build` can be a required check
+  # without blocking other PRs. The classifier script is checked out from the
+  # base revision, so editing it does not skip the PR's own build.
+  changes:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read # lists the pull request's changed files
+    outputs:
+      image: ${{ steps.decide.outputs.image }}
+      release: ${{ steps.decide.outputs.release }}
+      validate: ${{ steps.decide.outputs.validate }}
+    steps:
+      - name: Checkout the base revision's scripts
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Decide what to build
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+        run: |
+          set -euo pipefail
+          image=false release=false validate=false
+          case "${GITHUB_EVENT_NAME}" in
+            push|workflow_dispatch)
+              image=true
+              if [ "${GITHUB_REF}" = refs/heads/main ]; then release=true; fi ;;
+            schedule)
+              image=true ;;
+            pull_request)
+              # Adding an unrelated label changes nothing about the PR.
+              if [ "${ACTION}" != labeled ] || [ "${LABEL}" = full-build ]; then
+                validate=true
+                gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+                  --jq '.[] | .filename, (.previous_filename // empty)' > "${RUNNER_TEMP}/changed.txt"
+                # Before the classifier exists on the base branch, build.
+                needed=true
+                if [ -f .github/scripts/image-build-needed.py ]; then
+                  needed="$(python3 .github/scripts/image-build-needed.py < "${RUNNER_TEMP}/changed.txt")"
+                fi
+                if [ "${needed}" = true ]; then
+                  if jq -e 'index("full-build")' <<< "${PR_LABELS}" > /dev/null \
+                    || grep -qE '^(elements/freedesktop-sdk\.bst|patches/)' "${RUNNER_TEMP}/changed.txt"; then
+                    image=true
+                  fi
+                fi
+              fi ;;
+          esac
+          {
+            echo "image=${image}"
+            echo "release=${release}"
+            echo "validate=${validate}"
+          } >> "$GITHUB_OUTPUT"
+          echo "image=${image} release=${release} validate=${validate}"
+
+  # The cheap check every pull request gets: resolves every shipped element
+  # graph and runs the version-invariant checks (`just validate`), with
+  # throwaway keys.
+  validate:
+    needs: changes
+    if: needs.changes.outputs.validate == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          persist-credentials: false
+
+      - name: Set up just
+        uses: taiki-e/install-action@f7e5d7c96141423b5b25b2da9294395d08513ad # v2
+        with:
+          tool: just@1.58.0
+
+      - name: Generate throwaway keys
+        run: just gen-dev-keys
+
+      - name: Validate Element Graph
+        run: just validate
+
+  # The bootc image build. Every build uses the committed INSECURE development
+  # module certificate unless release signing is wired up (Secure Boot is M3);
+  # releases are defined by the push to GHCR in `release`, nothing else.
+  build:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.image == 'true' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The triggering commit, not its branch tip.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          persist-credentials: false
+
+      - name: Set up just
+        uses: taiki-e/install-action@f7e5d7c96141423b5b25b2da9294395d08513ad # v2
+        with:
+          tool: just@1.58.0
+
+      # Podman drive the bst2 container (`just bst`); runners may not ship it.
+      - name: Set up podman
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends podman fuse-overlayfs
+          sudo chmod 666 /dev/fuse
+
+      - name: Set up runner disk space
+        run: bash scripts/ci-runner-disk.sh
+
+      # Throwaway keys for every non-release build; the image is never signed
+      # until real keys exist, so releases use the same path for now.
+      - name: Generate throwaway keys
+        run: just gen-dev-keys
+
+      # One version per build, increasing under strverscmp(). Non-release
+      # builds use a 0.* version so they can never sort above a release.
+      - name: Set image version
+        id: version
+        env:
+          RELEASE: ${{ needs.changes.outputs.release }}
+        run: |
+          set -euo pipefail
+          if [ "${RELEASE}" = true ]; then
+            V="$(date -u +%y.%m).${GITHUB_RUN_NUMBER}"
+          else
+            V="0.${GITHUB_RUN_NUMBER}"
+          fi
+          just set-version "${V}"
+          echo "version=${V}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Element Graph
+        run: just validate
+
+      - name: Build the bootc image
+        run: just build-image
+
+      # The OCI layout is both the artifact handed to boot-test (later) and
+      # the input to the GHCR push in `release`.
+      - name: Export the OCI layout
+        run: just export-image dist/oci
+
+      - name: Upload OCI layout
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oci
+          path: dist/oci/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Publishes a main build as the bootc image ghcr.io/<owner>/homelab, with
+  # the version tag plus `testing` (what bootc testers switch to) and `latest`.
+  # Only runs for releases (pushes/dispatches to main, where the code is
+  # already reviewed), and is the only job that holds a write token.
+  release:
+    if: ${{ !cancelled() && needs.changes.outputs.release == 'true' && needs.build.result == 'success' }}
+    needs: [changes, build]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write # pushes the OCI image to ghcr.io
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download OCI layout
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: oci
+          path: dist/oci
+
+      - name: Set up skopeo
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+
+      - name: Push to GHCR
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "${GITHUB_TOKEN}" | skopeo login --username "${GITHUB_ACTOR}" --password-stdin ghcr.io
+          # A 0.* version is a non-release build; never publish it.
+          [[ "${VERSION}" != 0.* ]] || { echo "refusing to publish a 0.* build" >&2; exit 1; }
+          # The OCI layout is tagged `latest` in the image index; copy it to
+          # the immutable version tag, plus moving testing/latest.
+          # Point `latest` and `testing` only when no newer version is already
+          # published; a replayed dispatch must not move them backwards.
+          for t in "${VERSION}" testing latest; do
+            skopeo copy --retry-times 3 \
+              "oci:dist/oci:latest" "docker://${IMAGE}/homelab:${t}"
+          done
+
+  # Nightly failures block nothing, so nobody sees them unless this says so:
+  # one open "Nightly build failing" issue gets a comment per failed nightly
+  # run and is closed by the next one that passes. Schedule events only; the
+  # job holds nothing but issues: write and runs no repository code.
+  nightly-status:
+    needs: [changes, build]
+    if: ${{ !cancelled() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    steps:
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FAILED: ${{ contains(needs.*.result, 'failure') }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Nightly build failing"
+          issue="$(gh issue list --state open --limit 500 --json number,title \
+            --jq "[.[] | select(.title == \"${title}\")][0].number // empty")"
+          if [ "${FAILED}" = true ]; then
+            if [ -n "${issue}" ]; then
+              gh issue comment "${issue}" --body "Failed again: ${RUN_URL}"
+            else
+              gh issue create --title "${title}" \
+                --body "The nightly build of main failed: ${RUN_URL}"$'\n\n'"This issue closes when a later nightly build passes."
+            fi
+          elif [ -n "${issue}" ]; then
+            gh issue close "${issue}" --comment "The nightly build passes again: ${RUN_URL}"
+          fi
